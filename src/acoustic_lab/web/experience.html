@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dois mundos acústicos · prévia local</title>
+  <style>
+    :root{color-scheme:dark;--bg:#081018;--panel:#101d29;--line:#294153;--ink:#e9f2f7;--muted:#9eb2bf;--a:#52c7ff;--b:#f5b96b}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#122637,var(--bg) 55%);font:15px system-ui,sans-serif;color:var(--ink)}main{max-width:1500px;margin:auto;padding:24px}.eyebrow{color:var(--a);letter-spacing:.12em;text-transform:uppercase;font-size:12px}h1{margin:.3rem 0;font-size:clamp(24px,4vw,44px)}p{color:var(--muted);max-width:850px}.toolbar,.worlds,.bottom{display:flex;gap:12px}.toolbar{align-items:center;flex-wrap:wrap;margin:20px 0}.toolbar button,.toolbar select{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:10px 14px;border-radius:8px;cursor:pointer}.toolbar button:hover{border-color:var(--a)}#status{color:var(--muted);font-size:13px}.worlds{align-items:stretch}.world{min-width:0;flex:1;background:rgba(16,29,41,.8);border:1px solid var(--line);border-radius:12px;overflow:hidden}.world h2{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line)}.world h2 span{color:var(--a)}.world:nth-child(2) h2 span{color:var(--b)}canvas{display:block;width:100%;height:430px;cursor:grab}canvas:active{cursor:grabbing}.bottom{margin-top:12px;align-items:flex-start}.card{flex:1;background:rgba(16,29,41,.8);border:1px solid var(--line);border-radius:12px;padding:16px}.card h3{margin-top:0;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.selected{font-family:ui-monospace,monospace;word-break:break-all}.note{font-size:12px}.warning{color:#f5b96b}@media(max-width:900px){.worlds,.bottom{flex-direction:column}canvas{height:320px}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">exp-001 / exploração sensorial</div>
+  <h1>Dois mundos para o mesmo som</h1>
+  <p>Arraste para navegar. Selecione um ponto e use o gesto de áudio para ouvir a espacialização e ver os dois mundos reagirem ao mesmo sinal. As posições são uma prévia visual reproduzível; não são prova de descoberta musical.</p>
+  <div class="toolbar">
+    <button id="audioButton">Iniciar áudio</button>
+    <button id="toggleButton" disabled>Ouvir Mundo A</button>
+    <button id="resetButton">Resetar câmera</button>
+    <label>Movimento <input id="motion" type="checkbox" checked></label>
+    <span id="status">Carregando dados locais…</span>
+  </div>
+  <section class="worlds">
+    <article class="world"><h2>Mundo A · <span>encoder da Fase 1</span></h2><canvas id="worldA" aria-label="Mundo A"></canvas></article>
+    <article class="world"><h2>Mundo B · <span>preditor de trecho futuro</span></h2><canvas id="worldB" aria-label="Mundo B"></canvas></article>
+  </section>
+  <section class="bottom">
+    <div class="card"><h3>Seleção</h3><div id="selection" class="selected">Nenhum ponto selecionado.</div><p id="audioPath" class="note"></p></div>
+    <div class="card"><h3>Guardrails</h3><p class="note">IDs opacos · PCA ajustada somente no treino · volume máximo 18% · uma fonte de áudio compartilhada pelos dois mundos · reação visual suavizada · execução sem CDN.</p><p class="note warning">Não iniciar áudio durante a condução. A experiência usa fones estéreo.</p></div>
+  </section>
+</main>
+<script type="module" src="experience.js"></script>
+</body>
+</html>
