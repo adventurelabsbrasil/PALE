@@ -93,6 +93,17 @@ alterada.
 
 ## Experimento 2 — Organism
 
+### Camada didática opcional
+
+O mundo pode mostrar uma explicação por evento com a chave “Explicar sinais e
+limites”. Ela é desligada por padrão e só revela a proveniência persistida
+(`confirmed`, `inferred` ou `uncertain`), os sinais acústicos observados e os
+limites da inferência. Alternar a camada não recalcula o áudio, altera o
+universo ou move a linha do tempo. Energia, pulso/impacto, grave,
+harmonia, melodia/linha, textura/ruído e silêncio/espaço são descritos como
+leituras de sinal; instrumento, acorde, melodia e intenção não são apresentados
+como fatos sem evidência específica.
+
 ## Music Paint Wall — experimento visual isolado
 
 Para abrir o estudo de pintura musical, sirva a pasta web e abra

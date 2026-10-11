@@ -64,5 +64,8 @@ def synthetic_event(
         "origin": "synthetic",
         "pitch": pitch,
     }
+    from .provenance import annotate_event
+
+    event = annotate_event(event)
     validate_event(event)
     return event

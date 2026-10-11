@@ -12,6 +12,7 @@ import numpy as np
 import soundfile as sf
 
 from .event_contract import CONTRACT_VERSION, validate_event
+from .provenance import DIDACTIC_VERSION, SIGNAL_DOMAINS, annotate_event
 
 
 ANALYZER_VERSION = "pale-analyzer-v1"
@@ -154,6 +155,7 @@ def analyze_audio(
             "confidence": "inferred",
             "origin": "audio",
         }
+        event = annotate_event(event)
         validate_event(event)
         events.append(event)
 
@@ -180,4 +182,10 @@ def analyze_audio(
         "spectra": spectra,
         "events": events,
         "warnings": ["Musical entities are perceptual inferences from the audio; no instrument identity is asserted."],
+        "didactic": {
+            "version": DIDACTIC_VERSION,
+            "enabled_by_default": False,
+            "domains": list(SIGNAL_DOMAINS),
+            "not_claimed": ["instrumento", "acorde", "melodia", "intenção"],
+        },
     }

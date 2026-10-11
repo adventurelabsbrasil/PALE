@@ -21,6 +21,7 @@ def test_prepare_experiment2_copies_audio_hash_and_assets(tmp_path):
     assert all((output / name).exists() for name in ("experiment2.html", "experiment2.js", "manifest.json"))
     assert (output / "visual_lenses.js").exists()
     assert (output / "session_branch.js").exists()
+    assert (output / "didactic.js").exists()
     assert all((output / name).exists() for name in ("core.vert", "core.frag", "memory.vert", "memory.frag", "particles.vert", "particles.frag"))
     assert (output / "vendor" / "three.module.min.js").exists()
     assert (output / "vendor" / "postprocessing" / "EffectComposer.js").exists()
@@ -29,6 +30,8 @@ def test_prepare_experiment2_copies_audio_hash_and_assets(tmp_path):
     assert {"repeat", "novelty"}.issubset(manifest["analysis"]["features"])
     assert manifest["visual"]["lens_contract"] == "pale-lens-v1"
     assert {lens["id"] for lens in manifest["visual"]["lenses"]} == {"organism", "constellation"}
+    assert manifest["didactic"]["enabled_by_default"] is False
+    assert manifest["didactic"]["provenance_field"] == "events[].provenance"
 
 
 def test_prepare_experiment2_rejects_existing_output_and_invalid_audio(tmp_path):
