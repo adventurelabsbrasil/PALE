@@ -90,6 +90,7 @@ def run_registered(
             port=port,
             open_browser=open_browser,
             serve=serve,
+            preanalyze=True,
         )
 
     raise AssertionError(f"Unhandled registered experiment: {experiment_id}")
