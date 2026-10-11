@@ -32,6 +32,8 @@ def test_prepare_experiment2_copies_audio_hash_and_assets(tmp_path):
     assert {lens["id"] for lens in manifest["visual"]["lenses"]} == {"organism", "constellation"}
     assert manifest["didactic"]["enabled_by_default"] is False
     assert manifest["didactic"]["provenance_field"] == "events[].provenance"
+    assert manifest["artifact"]["export"] == "artifact.json"
+    assert manifest["artifact"]["limits"]["max_gpu_instances"] == 20_000
 
 
 def test_prepare_experiment2_rejects_existing_output_and_invalid_audio(tmp_path):

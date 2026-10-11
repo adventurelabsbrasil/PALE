@@ -162,6 +162,23 @@ uv run python -m acoustic_lab experiment2 \
   --no-serve --no-open
 ```
 
+### Artefatos e limites do primeiro corte
+
+Com `--preanalyze`, o diretório local também recebe `analysis.json` e
+`artifact.json`. O artefato versionado (`pale-artifact-v1`) contém manifesto,
+linha do tempo, configuração, seed, proveniência e limites, mas não copia os
+bytes do áudio. `acoustic_lab.artifact.load_artifact()` valida a identidade,
+os eventos e a declaração local-only antes da reimportação. A interface pode
+exportar/reimportar o mesmo JSON; a faixa continua sendo resolvida pelo
+arquivo local correspondente, sem serviço remoto.
+
+Os limites defensivos são: áudio de até 100 MB, 600 s, 30.000 quadros/eventos,
+20.000 instâncias GPU, 12 s de memória detalhada e 256 MB para o JSON. Eles
+protegem memória e responsividade no MacBook Air M4; arquivos que excedem o
+limite são rejeitados antes de gerar um artefato parcial. A análise registra
+silêncio digital, possível clipping, estéreo, taxa de amostragem e falhas de
+decodificação como estados observáveis, sem transformar inferências em rótulos.
+
 ## Prévia audiovisual 3D local
 
 Depois de uma execução da Fase 1, gere a experiência exploratória em um diretório novo:

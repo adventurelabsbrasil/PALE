@@ -13,6 +13,7 @@ import threading
 import webbrowser
 
 from .audio_analysis import analyze_audio
+from .artifact import ARTIFACT_VERSION, RESOURCE_LIMITS, write_artifact
 
 
 EXPERIMENT_VERSION = "experiment2-organism-v1"
@@ -40,6 +41,10 @@ def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) 
         raise ValueError("Experiment 2 accepts only WAV or MP3 audio")
     if audio.stat().st_size == 0:
         raise ValueError("Audio file is empty")
+    analysis = None
+    if preanalyze:
+        print("Analisando áudio local antes de abrir o mundo… 0%", flush=True)
+        analysis = analyze_audio(audio, progress=lambda value: print(f"Analisando áudio local… {value}%", flush=True) if value in {0, 25, 50, 75, 100} else None)
 
     output.mkdir(parents=True)
     audio_dir = output / "audio"
@@ -88,13 +93,19 @@ def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) 
             "provenance_field": "events[].provenance",
             "not_claimed": ["instrumento", "acorde", "melodia", "intenção"],
         },
+        "artifact": {
+            "version": ARTIFACT_VERSION,
+            "export": "artifact.json",
+            "audio_included": False,
+            "processing": "local-only",
+            "limits": RESOURCE_LIMITS,
+        },
         "created_by": "acoustic_lab.experiment2",
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     if preanalyze:
-        print("Analisando áudio local antes de abrir o mundo… 0%", flush=True)
-        analysis = analyze_audio(audio, progress=lambda value: print(f"Analisando áudio local… {value}%", flush=True) if value in {0, 25, 50, 75, 100} else None)
+        assert analysis is not None
         (output / "analysis.json").write_text(json.dumps(analysis, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         manifest["analysis_artifact"] = "analysis.json"
         manifest["identity"] = analysis["identity"]
@@ -106,6 +117,7 @@ def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) 
             "precomputed": True,
         }
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_artifact(output, manifest, analysis)
 
     shutil.copy2(WEB_ROOT / "experiment2.html", output / "experiment2.html")
     for script in ("experiment2.js", "visual_lenses.js", "session_branch.js", "didactic.js"):
