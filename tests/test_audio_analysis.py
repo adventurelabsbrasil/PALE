@@ -41,6 +41,9 @@ def test_preanalyzed_world_writes_manifest_identity_and_analysis(tmp_path):
 
     manifest = json.loads((output / "manifest.json").read_text())
     analysis = json.loads((output / "analysis.json").read_text())
+    artifact = json.loads((output / "artifact.json").read_text())
     assert manifest["analysis_artifact"] == "analysis.json"
     assert manifest["identity"] == analysis["identity"]
     assert manifest["analysis"]["precomputed"] is True
+    assert artifact["artifact"] == "pale-artifact-v1"
+    assert artifact["analysis"]["identity"] == analysis["identity"]

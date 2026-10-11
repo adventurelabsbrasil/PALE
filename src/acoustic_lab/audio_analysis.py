@@ -11,9 +11,12 @@ from typing import Callable
 import numpy as np
 import soundfile as sf
 
+from .artifact import RESOURCE_LIMITS, analysis_identity, validate_analysis
+from .event_contract import CONTRACT_VERSION, validate_event
+from .provenance import DIDACTIC_VERSION, SIGNAL_DOMAINS, annotate_event
+
 
 ANALYZER_VERSION = "pale-analyzer-v1"
-CONTRACT_VERSION = "pale-timeline-v1"
 WINDOW_SAMPLES = 2048
 HOP_SAMPLES = 1024
 SEED = 2042
@@ -34,27 +37,38 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_audio(path: Path) -> tuple[np.ndarray, int]:
+def _load_audio(path: Path) -> tuple[np.ndarray, int, np.ndarray, float, int]:
     if path.suffix.lower() == ".wav":
-        samples, sample_rate = sf.read(path, dtype="float32", always_2d=True)
+        try:
+            samples, sample_rate = sf.read(path, dtype="float32", always_2d=True)
+        except Exception as exc:
+            raise ValueError(f"Audio decoding failed: {path.name}") from exc
         mono = samples.mean(axis=1)
+        channel_count = samples.shape[1]
+        channel_delta = samples[:, 0] - samples[:, 1] if samples.shape[1] > 1 else np.zeros(len(samples), dtype=np.float32)
     elif path.suffix.lower() == ".mp3":
         try:
             import torchaudio
         except (ImportError, ModuleNotFoundError) as exc:
             raise RuntimeError("MP3 analysis requires torchaudio and TorchCodec") from exc
-        waveform, sample_rate = torchaudio.load(path, normalize=True, channels_first=True)
-        mono = waveform.float().mean(dim=0).cpu().numpy()
+        try:
+            waveform, sample_rate = torchaudio.load(path, normalize=True, channels_first=True)
+        except Exception as exc:
+            raise ValueError(f"Audio decoding failed: {path.name}") from exc
+        channels = waveform.float().cpu().numpy()
+        channel_count = channels.shape[0]
+        mono = channels.mean(axis=0)
+        channel_delta = channels[0] - channels[1] if channels.shape[0] > 1 else np.zeros(len(mono), dtype=np.float32)
     else:
         raise ValueError("PALE accepts only WAV or MP3 audio")
     if mono.size == 0:
         raise ValueError("Audio is empty")
     if not np.isfinite(mono).all():
         raise ValueError("Audio contains NaN or infinite samples")
-    peak = float(np.max(np.abs(mono)))
-    if peak > 0:
-        mono = mono / peak
-    return np.asarray(mono, dtype=np.float32), int(sample_rate)
+    input_peak = float(np.max(np.abs(mono)))
+    if input_peak > 0:
+        mono = mono / input_peak
+    return np.asarray(mono, dtype=np.float32), int(sample_rate), np.asarray(channel_delta, dtype=np.float32), input_peak, channel_count
 
 
 def _normalize(values: list[float]) -> list[float]:
@@ -78,11 +92,18 @@ def analyze_audio(
     path = path.expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
+    if path.stat().st_size > RESOURCE_LIMITS["max_audio_bytes"]:
+        raise ValueError("audio file exceeds the PALE input-size limit")
     source_hash = _sha256(path)
-    samples, sample_rate = _load_audio(path)
+    samples, sample_rate, channel_delta, input_peak, channel_count = _load_audio(path)
+    if len(samples) / sample_rate > RESOURCE_LIMITS["max_duration_seconds"]:
+        raise ValueError("audio duration exceeds the PALE limit")
+    estimated_frames = max(1, len(samples) - config.window_samples + 1 + config.hop_samples - 1) // config.hop_samples
+    if estimated_frames > RESOURCE_LIMITS["max_frames"]:
+        raise ValueError("audio frame count exceeds the PALE limit")
     window = np.hanning(config.window_samples).astype(np.float32)
     frame_starts = list(range(0, max(1, len(samples) - config.window_samples + 1), config.hop_samples))
-    raw: dict[str, list[float]] = {key: [] for key in ("rms", "low", "mid", "high", "centroid", "flux", "attack")}
+    raw: dict[str, list[float]] = {key: [] for key in ("rms", "low", "mid", "high", "centroid", "flux", "attack", "stereo_width")}
     previous = np.zeros(config.window_samples // 2 + 1, dtype=np.float32)
     previous_rms = 0.0
     frame_spectra: list[np.ndarray] = []
@@ -107,6 +128,10 @@ def analyze_audio(
         raw["centroid"].append(centroid)
         raw["flux"].append(flux)
         raw["attack"].append(max(0.0, rms - previous_rms))
+        side = channel_delta[start : start + config.window_samples]
+        if len(side) < config.window_samples:
+            side = np.pad(side, (0, config.window_samples - len(side)))
+        raw["stereo_width"].append(float(np.sqrt(np.mean(side * side))))
         frame_spectra.append(spectrum)
         previous = spectrum
         previous_rms = rms
@@ -139,7 +164,7 @@ def analyze_audio(
     for index, start in enumerate(frame_starts):
         dominant = max(("low", normalized["low"][index]), ("mid", normalized["mid"][index]), ("high", normalized["high"][index]), key=lambda item: item[1])[0]
         layer = "pulse/impact" if event_signal[index] >= 0.55 else f"{dominant}/energy"
-        events.append({
+        event = {
             "id": f"event-{index:06d}",
             "time": round(start / sample_rate, 8),
             "duration": round(min(config.window_samples, len(samples) - start) / sample_rate, 8),
@@ -152,21 +177,18 @@ def analyze_audio(
             "silence": normalized["silence"][index],
             "confidence": "inferred",
             "origin": "audio",
-        })
+        }
+        event = annotate_event(event)
+        validate_event(event)
+        events.append(event)
 
     config_data = asdict(config)
-    identity_payload = {
-        "source_sha256": source_hash,
-        "analyzer_version": ANALYZER_VERSION,
-        "contract_version": CONTRACT_VERSION,
-        "config": config_data,
-    }
-    identity = hashlib.sha256(json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {
+    identity = analysis_identity(source_hash, ANALYZER_VERSION, CONTRACT_VERSION, config_data)
+    result = {
         "contract_version": CONTRACT_VERSION,
         "analyzer_version": ANALYZER_VERSION,
         "identity": identity,
-        "source": {"original_name": path.name, "sha256": source_hash},
+        "source": {"original_name": path.name, "sha256": source_hash, "bytes": path.stat().st_size, "channels": channel_count},
         "config": config_data,
         "sample_rate": sample_rate,
         "duration": round(len(samples) / sample_rate, 8),
@@ -177,4 +199,16 @@ def analyze_audio(
         "spectra": spectra,
         "events": events,
         "warnings": ["Musical entities are perceptual inferences from the audio; no instrument identity is asserted."],
+        "didactic": {
+            "version": DIDACTIC_VERSION,
+            "enabled_by_default": False,
+            "domains": list(SIGNAL_DOMAINS),
+            "not_claimed": ["instrumento", "acorde", "melodia", "intenção"],
+        },
     }
+    if input_peak == 0:
+        result["warnings"].append("Audio is digital silence; normalized features remain zero.")
+    elif input_peak >= 0.999:
+        result["warnings"].append("Input reaches digital full scale; clipping may be present.")
+    validate_analysis(result)
+    return result

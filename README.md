@@ -93,6 +93,17 @@ alterada.
 
 ## Experimento 2 — Organism
 
+### Camada didática opcional
+
+O mundo pode mostrar uma explicação por evento com a chave “Explicar sinais e
+limites”. Ela é desligada por padrão e só revela a proveniência persistida
+(`confirmed`, `inferred` ou `uncertain`), os sinais acústicos observados e os
+limites da inferência. Alternar a camada não recalcula o áudio, altera o
+universo ou move a linha do tempo. Energia, pulso/impacto, grave,
+harmonia, melodia/linha, textura/ruído e silêncio/espaço são descritos como
+leituras de sinal; instrumento, acorde, melodia e intenção não são apresentados
+como fatos sem evidência específica.
+
 ## Music Paint Wall — experimento visual isolado
 
 Para abrir o estudo de pintura musical, sirva a pasta web e abra
@@ -114,6 +125,12 @@ emergente e única por música. A seed deriva do hash do arquivo, permitindo
 reconstrução determinística; a obra e os eventos podem ser exportados em PNG e
 JSON. O estado permanece em memória e o artefato é separado das experiências
 acústicas existentes.
+
+O piano vivo oferece cinco instrumentos Web Audio transparentes — oscilador,
+baixo, pluck/piano, percussão e ruído/textura — com controles de dinâmica,
+filtro, ataque e panorâmica. Cada toque gera um evento `pale-timeline-v1` com
+origem `synthetic`, tempo, duração, campos acústicos e identificador estável;
+a análise de áudio usa o mesmo contrato, mas preserva `confidence: inferred`.
 
 O experimento 2 é uma experiência audiovisual independente da Fase 1. Ele
 representa um áudio como um organismo 3D: um núcleo reage ao estado acústico
@@ -144,6 +161,23 @@ uv run python -m acoustic_lab experiment2 \
   --output artifacts/experiment-002 \
   --no-serve --no-open
 ```
+
+### Artefatos e limites do primeiro corte
+
+Com `--preanalyze`, o diretório local também recebe `analysis.json` e
+`artifact.json`. O artefato versionado (`pale-artifact-v1`) contém manifesto,
+linha do tempo, configuração, seed, proveniência e limites, mas não copia os
+bytes do áudio. `acoustic_lab.artifact.load_artifact()` valida a identidade,
+os eventos e a declaração local-only antes da reimportação. A interface pode
+exportar/reimportar o mesmo JSON; a faixa continua sendo resolvida pelo
+arquivo local correspondente, sem serviço remoto.
+
+Os limites defensivos são: áudio de até 100 MB, 600 s, 30.000 quadros/eventos,
+20.000 instâncias GPU, 12 s de memória detalhada e 256 MB para o JSON. Eles
+protegem memória e responsividade no MacBook Air M4; arquivos que excedem o
+limite são rejeitados antes de gerar um artefato parcial. A análise registra
+silêncio digital, possível clipping, estéreo, taxa de amostragem e falhas de
+decodificação como estados observáveis, sem transformar inferências em rótulos.
 
 ## Prévia audiovisual 3D local
 
