@@ -11,9 +11,10 @@ from typing import Callable
 import numpy as np
 import soundfile as sf
 
+from .event_contract import CONTRACT_VERSION, validate_event
+
 
 ANALYZER_VERSION = "pale-analyzer-v1"
-CONTRACT_VERSION = "pale-timeline-v1"
 WINDOW_SAMPLES = 2048
 HOP_SAMPLES = 1024
 SEED = 2042
@@ -139,7 +140,7 @@ def analyze_audio(
     for index, start in enumerate(frame_starts):
         dominant = max(("low", normalized["low"][index]), ("mid", normalized["mid"][index]), ("high", normalized["high"][index]), key=lambda item: item[1])[0]
         layer = "pulse/impact" if event_signal[index] >= 0.55 else f"{dominant}/energy"
-        events.append({
+        event = {
             "id": f"event-{index:06d}",
             "time": round(start / sample_rate, 8),
             "duration": round(min(config.window_samples, len(samples) - start) / sample_rate, 8),
@@ -152,7 +153,9 @@ def analyze_audio(
             "silence": normalized["silence"][index],
             "confidence": "inferred",
             "origin": "audio",
-        })
+        }
+        validate_event(event)
+        events.append(event)
 
     config_data = asdict(config)
     identity_payload = {

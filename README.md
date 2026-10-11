@@ -115,6 +115,12 @@ reconstrução determinística; a obra e os eventos podem ser exportados em PNG 
 JSON. O estado permanece em memória e o artefato é separado das experiências
 acústicas existentes.
 
+O piano vivo oferece cinco instrumentos Web Audio transparentes — oscilador,
+baixo, pluck/piano, percussão e ruído/textura — com controles de dinâmica,
+filtro, ataque e panorâmica. Cada toque gera um evento `pale-timeline-v1` com
+origem `synthetic`, tempo, duração, campos acústicos e identificador estável;
+a análise de áudio usa o mesmo contrato, mas preserva `confidence: inferred`.
+
 O experimento 2 é uma experiência audiovisual independente da Fase 1. Ele
 representa um áudio como um organismo 3D: um núcleo reage ao estado acústico
 presente e uma malha espiral preserva memória temporal. A análise usa sinais
