@@ -3,6 +3,7 @@ import { OrbitControls } from "./vendor/OrbitControls.js";
 import { EffectComposer } from "./vendor/postprocessing/EffectComposer.js";
 import { RenderPass } from "./vendor/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "./vendor/postprocessing/UnrealBloomPass.js";
+import { appendIntervention, createBranchState, importSession, serializeSession } from "./session_branch.js";
 
 const manifest = await fetch("manifest.json").then((r) => r.json());
 let artifactAnalysis = manifest.analysis_artifact ? await fetch(manifest.analysis_artifact).then((r) => r.json()) : null;
@@ -10,21 +11,48 @@ const $ = (id) => document.getElementById(id);
 const canvas = $("stage"), status = $("status"), playButton = $("play");
 const seek = $("seek"), currentLabel = $("current"), durationLabel = $("duration");
 const audioFile = $("audioFile"), fileName = $("fileName"), piano = $("piano");
+const branchMode = $("branchMode"), branchStatus = $("branchStatus"), sessionFile = $("sessionFile");
 const observatoryPlot = $("observatoryPlot"), observatoryEvent = $("observatoryEvent");
 const WINDOW = manifest.analysis.window_samples, HOP = manifest.analysis.hop_samples;
 let renderer, composer, bloom, scene, camera, controls, spectrumLine, spectrumPoints, spectrumTrails, spectrumCloud;
-let audioContext, audioBuffer, sourceNode, startedAt = 0, offset = 0, playing = false;
-let selectedAudioBytes = null, selectedAudioName = "";
+let audioContext, audioBuffer, sourceNode, sourceGain, startedAt = 0, offset = 0, playing = false;
+let selectedAudioBytes = null, selectedAudioName = "", selectedAudioSha256 = "";
 let pianoEnergy = 0, pianoPulse = 0, pianoTime = 0, lastPianoHistory = 0, lastFrameTime = 0;
 const pianoBand = new THREE.Vector3(0, 0, 1);
 const pianoVoices = new Map();
 let analysis = null, currentFeatures = {rms: 0, low: 0, mid: 0, high: 0, centroid: 0, spread: 0, flatness: 0, flux: 0, attack: 0, density: 0, stereo_width: 0, silence: 1, repeat: 0, novelty: 0};
 let selectedEventIndex = -1;
+const sourceState = Object.freeze({id: "source", interventions: []});
+let branchState = createBranchState({sourceId: "branch-001"}), activeWorld = "source";
+let interventionSequence = 0;
 const history = [], spectrumHistory = [], memoryWidth = 256, spectrumBins = 40, spectrumTrailRows = 24;
 let lastSpectrumTime = 0;
 const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const formatTime = (s) => { const n = Math.max(0, Math.floor(s)); return `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`; };
+
+function activeState() { return activeWorld === "source" ? sourceState : branchState; }
+function recordIntervention(type, payload = {}) {
+  if (activeWorld === "source") { activeWorld = "branch"; branchMode.value = "branch"; }
+  interventionSequence += 1;
+  branchState = appendIntervention(branchState, type, payload, interventionSequence).branch;
+  renderBranchState();
+}
+function renderBranchState() {
+  branchStatus.textContent = `${activeWorld === "source" ? "Fonte" : "Ramificação"} · ${branchState.interventions.length} intervenção${branchState.interventions.length === 1 ? "" : "ões"}`;
+  $("solo").setAttribute("aria-pressed", String(branchState.solo));
+  $("mute").setAttribute("aria-pressed", String(branchState.muted));
+  $("freeze").setAttribute("aria-pressed", String(branchState.frozen));
+  $("solo").textContent = branchState.solo ? "Dessolar" : "Solo";
+  $("mute").textContent = branchState.muted ? "Desmutar" : "Silenciar";
+  $("freeze").textContent = branchState.frozen ? "Descongelar" : "Congelar";
+}
+function switchWorld(world) { activeWorld = world; branchMode.value = world; renderBranchState(); status.textContent = world === "source" ? "Fonte original · intacta" : "Ramificação · exploração reversível"; }
+function sessionPayload() {
+  return serializeSession({origin: {name: selectedAudioName || manifest.source.original_name, sha256: selectedAudioSha256 || manifest.source.sha256}, branch: branchState, visual: {offset, camera: {position: camera?.position?.toArray?.() ?? [0, 0, 5.2], target: controls?.target?.toArray?.() ?? [0, 0, 0]}}, seed: manifest.visual.seed, versions: {experiment: manifest.experiment, contract: manifest.analysis.contract_version ?? "acoustic-v1"}});
+}
+function downloadSession() { const blob = new Blob([JSON.stringify(sessionPayload(), null, 2) + "\n"], {type: "application/json"}); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "pale-session.json"; link.click(); URL.revokeObjectURL(link.href); status.textContent = "Sessão salva · replay determinístico disponível"; }
+async function loadSession(file) { const imported = importSession(JSON.parse(await file.text())); branchState = imported.branch; interventionSequence = branchState.interventions.length; activeWorld = "branch"; branchMode.value = "branch"; offset = imported.session.visual?.offset ?? 0; renderBranchState(); seek.value = offset; status.textContent = "Sessão reimportada · ramificação restaurada"; }
 
 function fft(re, im) {
   for (let i = 1, j = 0; i < re.length; i++) { let bit = re.length >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
@@ -77,7 +105,7 @@ function drawObservatory(seconds = 0) {
   rows.forEach(([label, key, color], row) => { const values = observatoryValues(key); const y0 = top + row * rowHeight + 15; context.fillStyle = "#8f96ad"; context.font = "9px system-ui"; context.fillText(label, 5, y0 + 3); context.strokeStyle = "#20263a"; context.beginPath(); context.moveTo(plotLeft, y0); context.lineTo(width - 10, y0); context.stroke(); if (!values.length) return; context.strokeStyle = color; context.beginPath(); values.forEach((value, index) => { const x = plotLeft + index / Math.max(1, values.length - 1) * plotWidth, y = y0 - clamp(value) * 12; index ? context.lineTo(x, y) : context.moveTo(x, y); }); context.stroke(); });
   const cursor = plotLeft + clamp(seconds / Math.max(analysis.duration, 1e-8)) * plotWidth; context.strokeStyle = "#fff"; context.globalAlpha = .9; context.beginPath(); context.moveTo(cursor, top - 2); context.lineTo(cursor, top + rows.length * rowHeight - 5); context.stroke(); context.globalAlpha = 1; selectObservatoryEvent(seconds);
 }
-observatoryPlot.addEventListener("click", (event) => { if (!analysis) return; const rect = observatoryPlot.getBoundingClientRect(), ratio = clamp((event.clientX - rect.left) / rect.width); offset = ratio * analysis.duration; if (playing) playFrom(offset); drawObservatory(offset); });
+observatoryPlot.addEventListener("click", (event) => { if (!analysis) return; const rect = observatoryPlot.getBoundingClientRect(), ratio = clamp((event.clientX - rect.left) / rect.width); offset = ratio * analysis.duration; recordIntervention("seek", {seconds: offset}); if (playing) playFrom(offset); drawObservatory(offset); });
 const pianoNotes = [
   ["C4", 261.63, "a", false], ["C#4", 277.18, "w", true], ["D4", 293.66, "s", false], ["D#4", 311.13, "e", true], ["E4", 329.63, "d", false], ["F4", 349.23, "f", false], ["F#4", 369.99, "t", true], ["G4", 392.00, "g", false], ["G#4", 415.30, "y", true], ["A4", 440.00, "h", false], ["A#4", 466.16, "u", true], ["B4", 493.88, "j", false], ["C5", 523.25, "k", false], ["C#5", 554.37, "o", true], ["D5", 587.33, "l", false], ["D#5", 622.25, "p", true], ["E5", 659.25, ";", false]
 ];
@@ -85,7 +113,7 @@ function buildPiano() { for (const [name, frequency, key, black] of pianoNotes) 
 function noteOn(name, frequency, button) { if (pianoVoices.has(name)) return; audioContext ??= new AudioContext(); audioContext.resume(); const now = audioContext.currentTime, output = audioContext.createGain(), filter = audioContext.createBiquadFilter(); output.gain.setValueAtTime(.0001, now); output.gain.exponentialRampToValueAtTime(.16, now + .008); output.gain.exponentialRampToValueAtTime(.065, now + .22); output.gain.setTargetAtTime(.0001, now + .22, 1.35); filter.type = "lowpass"; filter.frequency.setValueAtTime(Math.min(5200, frequency * 10), now); filter.frequency.exponentialRampToValueAtTime(Math.max(1800, frequency * 4.2), now + .9); filter.Q.value = .55; filter.connect(output).connect(audioContext.destination);
   const oscillators = [], partials = [[1, 1], [2.002, .34], [3.006, .16], [4.014, .085], [5.03, .045], [6.05, .022]]; for (const [ratio, level] of partials) { const oscillator = audioContext.createOscillator(), partialGain = audioContext.createGain(); oscillator.type = "sine"; oscillator.frequency.value = frequency * ratio; partialGain.gain.value = level; oscillator.connect(partialGain).connect(filter); oscillator.start(now); oscillators.push(oscillator); }
   const noise = audioContext.createBufferSource(), noiseBuffer = audioContext.createBuffer(1, Math.floor(audioContext.sampleRate * .035), audioContext.sampleRate), noiseData = noiseBuffer.getChannelData(0); for (let i = 0; i < noiseData.length; i++) noiseData[i] = (Math.random() * 2 - 1) * (1 - i / noiseData.length); noise.buffer = noiseBuffer; const hammer = audioContext.createBiquadFilter(), hammerGain = audioContext.createGain(); hammer.type = "bandpass"; hammer.frequency.value = Math.min(5200, frequency * 5); hammer.Q.value = .8; hammerGain.gain.setValueAtTime(.045, now); hammerGain.gain.exponentialRampToValueAtTime(.0001, now + .035); noise.connect(hammer).connect(hammerGain).connect(output); noise.start(now);
-  pianoVoices.set(name, {oscillators, noise, output, button}); button.classList.add("active"); const brightness = clamp((frequency - 220) / 500); pianoBand.set(Math.cos(brightness * Math.PI * 2) * .8, Math.sin(brightness * Math.PI * 2) * .8, .45); pianoPulse = Math.max(pianoPulse, .72); pianoEnergy = Math.max(pianoEnergy, .1); currentFeatures = {...currentFeatures, rms: .1, low: 1 - brightness * .5, mid: .28, high: brightness * .5, centroid: brightness, spread: .35, flatness: .08, flux: .3, attack: .35, density: .22, stereo_width: 0, silence: 0, repeat: .12, novelty: .2}; status.textContent = `Piano orgânico · ${name}`; }
+  pianoVoices.set(name, {oscillators, noise, output, button}); button.classList.add("active"); const brightness = clamp((frequency - 220) / 500); pianoBand.set(Math.cos(brightness * Math.PI * 2) * .8, Math.sin(brightness * Math.PI * 2) * .8, .45); pianoPulse = Math.max(pianoPulse, .72); pianoEnergy = Math.max(pianoEnergy, .1); currentFeatures = {...currentFeatures, rms: .1, low: 1 - brightness * .5, mid: .28, high: brightness * .5, centroid: brightness, spread: .35, flatness: .08, flux: .3, attack: .35, density: .22, stereo_width: 0, silence: 0, repeat: .12, novelty: .2}; recordIntervention("create", {event: {id: `synthetic-${name}-${interventionSequence + 1}`, time: pianoTime, duration: .35, layer: "synthetic/note", energy: .1, frequency_region: brightness < .33 ? "low" : brightness < .66 ? "mid" : "high", attack: .35, brightness, confidence: "confirmed", origin: "synthetic", pitch: Math.round(frequency)}}); status.textContent = `Piano orgânico · ${name}`; }
 function noteOff(name) { const voice = pianoVoices.get(name); if (!voice) return; const now = audioContext.currentTime; voice.output.gain.cancelScheduledValues(now); voice.output.gain.setTargetAtTime(.0001, now, .16); for (const oscillator of voice.oscillators) oscillator.stop(now + .8); voice.noise.stop(now + .04); voice.button.classList.remove("active"); pianoVoices.delete(name); }
 function handlePianoKey(key, pressed) { const note = pianoNotes.find((item) => item[2] === key.toLowerCase()); if (!note) return; const button = piano.querySelector(`[data-key="${CSS.escape(note[2])}"]`); if (pressed) noteOn(note[0], note[1], button); else noteOff(note[0]); }
 buildPiano(); addEventListener("keydown", (event) => { if (!event.repeat) handlePianoKey(event.key, true); }); addEventListener("keyup", (event) => handlePianoKey(event.key, false));
@@ -116,13 +144,20 @@ function setVisuals(seconds, time) { currentFeatures = featuresAt(seconds); cons
 function pushHistory(seconds) { const sample = {...featuresAt(seconds)}; if (!history.length || seconds - history.at(-1).seconds > .045) { sample.seconds = seconds; history.push(sample); if (history.length > memoryWidth) history.shift(); } }
 async function start() { if (!analysis) { status.textContent = artifactAnalysis ? "Preparando áudio pré-analisado…" : "Decodificando e analisando o áudio…"; if (artifactAnalysis) { const bytes = selectedAudioBytes ?? await fetch(manifest.source.copied_path).then((r) => r.arrayBuffer()); audioContext ??= new AudioContext(); audioBuffer = await audioContext.decodeAudioData(bytes.slice(0)); analysis = artifactAnalysis; } else { analysis = await decodeAndAnalyze(selectedAudioBytes); } seek.max = analysis.duration; durationLabel.textContent = formatTime(analysis.duration); status.textContent = "Organismo pronto · gesto de áudio necessário"; } if (audioContext.state === "suspended") await audioContext.resume(); playFrom(offset); }
 function stopSource() { if (sourceNode) { try { sourceNode.stop(); } catch {} sourceNode.disconnect(); sourceNode = null; } }
-function playFrom(seconds) { stopSource(); offset = clamp(seconds, 0, analysis.duration); sourceNode = audioContext.createBufferSource(); sourceNode.buffer = audioBuffer; const gain = audioContext.createGain(); gain.gain.value = .82; sourceNode.connect(gain).connect(audioContext.destination); startedAt = audioContext.currentTime; sourceNode.start(0, offset); playing = true; playButton.textContent = "Pausar"; sourceNode.onended = () => { if (playing && audioContext.currentTime - startedAt + offset >= analysis.duration - .05) { playing = false; offset = analysis.duration; playButton.textContent = "Iniciar"; } }; }
+function playFrom(seconds) { stopSource(); offset = clamp(seconds, 0, analysis.duration); sourceNode = audioContext.createBufferSource(); sourceNode.buffer = audioBuffer; sourceGain = audioContext.createGain(); sourceGain.gain.value = branchState.muted ? 0 : .82; sourceNode.connect(sourceGain).connect(audioContext.destination); startedAt = audioContext.currentTime; sourceNode.start(0, offset); playing = true; playButton.textContent = "Pausar"; sourceNode.onended = () => { if (playing && audioContext.currentTime - startedAt + offset >= analysis.duration - .05) { playing = false; offset = analysis.duration; playButton.textContent = "Iniciar"; } }; }
 function currentTime() { return playing ? clamp(offset + audioContext.currentTime - startedAt, 0, analysis?.duration ?? 0) : offset; }
 function pause() { offset = currentTime(); stopSource(); playing = false; playButton.textContent = "Continuar"; }
 function reset() { pause(); offset = 0; history.length = 0; spectrumHistory.length = 0; }
-audioFile.addEventListener("change", async () => { const file = audioFile.files?.[0]; if (!file) return; try { pause(); selectedAudioBytes = await file.arrayBuffer(); selectedAudioName = file.name; artifactAnalysis = null; fileName.textContent = `${file.name} · carregando…`; analysis = null; audioBuffer = null; offset = 0; seek.value = 0; durationLabel.textContent = "00:00"; history.length = 0; await decodeAndAnalyze(selectedAudioBytes); seek.max = analysis.duration; durationLabel.textContent = formatTime(analysis.duration); fileName.textContent = `${file.name} · pronto`; status.textContent = "Áudio local pronto · pressione Iniciar"; } catch (error) { fileName.textContent = "Não foi possível ler esse áudio"; status.textContent = `Falha no áudio: ${error.message}`; } });
+audioFile.addEventListener("change", async () => { const file = audioFile.files?.[0]; if (!file) return; try { pause(); selectedAudioBytes = await file.arrayBuffer(); selectedAudioName = file.name; selectedAudioSha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", selectedAudioBytes)), (byte) => byte.toString(16).padStart(2, "0")).join(""); artifactAnalysis = null; fileName.textContent = `${file.name} · carregando…`; analysis = null; audioBuffer = null; offset = 0; seek.value = 0; durationLabel.textContent = "00:00"; history.length = 0; await decodeAndAnalyze(selectedAudioBytes); seek.max = analysis.duration; durationLabel.textContent = formatTime(analysis.duration); fileName.textContent = `${file.name} · pronto`; status.textContent = "Áudio local pronto · pressione Iniciar"; } catch (error) { fileName.textContent = "Não foi possível ler esse áudio"; status.textContent = `Falha no áudio: ${error.message}`; } });
 playButton.addEventListener("click", async () => { try { if (!analysis || !playing) await start(); else pause(); } catch (error) { status.textContent = `Falha no áudio: ${error.message}`; } });
-$("restart").addEventListener("click", async () => { reset(); if (analysis) await start(); }); seek.addEventListener("input", () => { offset = Number(seek.value); if (playing) playFrom(offset); }); $("resetCamera").addEventListener("click", () => { controls.reset(); camera.position.set(0, 0, 5.2); controls.target.set(0, 0, 0); });
+$("restart").addEventListener("click", async () => { reset(); if (analysis) await start(); }); seek.addEventListener("input", () => { offset = Number(seek.value); recordIntervention("seek", {seconds: offset}); if (playing) playFrom(offset); }); $("resetCamera").addEventListener("click", () => { controls.reset(); camera.position.set(0, 0, 5.2); controls.target.set(0, 0, 0); });
+branchMode.addEventListener("change", () => switchWorld(branchMode.value));
+$("solo").addEventListener("click", () => recordIntervention("solo", {enabled: !branchState.solo}));
+$("mute").addEventListener("click", () => { recordIntervention("mute", {enabled: !branchState.muted}); if (sourceGain) sourceGain.gain.setTargetAtTime(branchState.muted ? 0 : .82, audioContext.currentTime, .015); });
+$("freeze").addEventListener("click", () => { recordIntervention("freeze", {enabled: !branchState.frozen}); if (branchState.frozen) pause(); });
+$("createEvent").addEventListener("click", () => recordIntervention("create", {event: {id: `user-event-${interventionSequence + 1}`, time: currentTime(), duration: .5, layer: "user/intervention", energy: currentFeatures.rms ?? 0, frequency_region: "mid", attack: currentFeatures.attack ?? 0, brightness: currentFeatures.centroid ?? 0, confidence: "hypothesis", origin: "synthetic"}}));
+$("saveSession").addEventListener("click", downloadSession);
+sessionFile.addEventListener("change", async () => { if (!sessionFile.files?.[0]) return; try { await loadSession(sessionFile.files[0]); } catch (error) { status.textContent = `Falha ao reimportar sessão: ${error.message}`; } });
 setupScene();
 function frame(now) { const seconds = currentTime(), dt = Math.min(.1, Math.max(0, now / 1000 - lastFrameTime)); lastFrameTime = now / 1000; pianoTime += dt; pianoPulse *= Math.pow(.015, dt); if (pianoVoices.size) pianoEnergy = Math.min(.18, pianoEnergy + dt * .12); else pianoEnergy *= Math.pow(.035, dt); if (analysis) { setVisuals(seconds, now / 1000); if (playing) pushHistory(seconds); seek.value = seconds; currentLabel.textContent = formatTime(seconds); status.textContent = playing ? `Organismo em movimento · memória ${Math.round((currentFeatures.repeat ?? 0) * 100)}%` : "Pausado · use a câmera para observar"; } else if (pianoEnergy > .008) { currentFeatures = {...currentFeatures, rms: pianoEnergy, flux: pianoEnergy * .45, attack: pianoEnergy * .35, density: pianoEnergy * .22, silence: 1 - pianoEnergy * 2, novelty: Math.min(.3, pianoEnergy * 1.4), repeat: .12}; setVisuals(0, now / 1000); if (pianoTime - lastPianoHistory > .045) { history.push({...currentFeatures, seconds: pianoTime}); if (history.length > memoryWidth) history.shift(); lastPianoHistory = pianoTime; } status.textContent = `Piano orgânico · ${pianoVoices.size} tecla${pianoVoices.size === 1 ? "" : "s"}`; } else { setVisuals(0, now / 1000); } drawObservatory(seconds); controls.update(); composer.render(); requestAnimationFrame(frame); }
-status.textContent = `${manifest.source.original_name} · ${artifactAnalysis ? "análise pronta" : "pronto para análise"}`; requestAnimationFrame(frame);
+status.textContent = `${manifest.source.original_name} · ${artifactAnalysis ? "análise pronta" : "pronto para análise"}`; renderBranchState(); requestAnimationFrame(frame);
