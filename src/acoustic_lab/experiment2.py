@@ -70,6 +70,11 @@ def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) 
         },
         "visual": {
             "seed": 2042,
+            "lens_contract": "pale-lens-v1",
+            "lenses": [
+                {"id": "organism", "label": "Organismo", "renderer": "organism-core-v1", "config": {"bloom": 1, "height": 1, "hue": 0}},
+                {"id": "constellation", "label": "Constelação", "renderer": "constellation-field-v1", "config": {"bloom": 1.45, "height": 1.3, "hue": 0.19}},
+            ],
             "detailed_memory_seconds": [8, 12],
             "historical_summary_segments": 256,
             "target_fps": 60,
@@ -96,7 +101,8 @@ def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) 
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     shutil.copy2(WEB_ROOT / "experiment2.html", output / "experiment2.html")
-    shutil.copy2(WEB_ROOT / "experiment2.js", output / "experiment2.js")
+    for script in ("experiment2.js", "visual_lenses.js", "session_branch.js"):
+        shutil.copy2(WEB_ROOT / script, output / script)
     for shader in ("core.vert", "core.frag", "memory.vert", "memory.frag", "particles.vert", "particles.frag"):
         shutil.copy2(WEB_ROOT / shader, output / shader)
     vendor = output / "vendor"

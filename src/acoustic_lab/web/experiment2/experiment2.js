@@ -4,6 +4,7 @@ import { EffectComposer } from "./vendor/postprocessing/EffectComposer.js";
 import { RenderPass } from "./vendor/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "./vendor/postprocessing/UnrealBloomPass.js";
 import { appendIntervention, createBranchState, importSession, serializeSession } from "./session_branch.js";
+import { LENS_VERSION, VISUAL_LENSES, getVisualLens, renderLens } from "./visual_lenses.js";
 
 const manifest = await fetch("manifest.json").then((r) => r.json());
 let artifactAnalysis = manifest.analysis_artifact ? await fetch(manifest.analysis_artifact).then((r) => r.json()) : null;
@@ -13,6 +14,7 @@ const seek = $("seek"), currentLabel = $("current"), durationLabel = $("duration
 const audioFile = $("audioFile"), fileName = $("fileName"), piano = $("piano");
 const branchMode = $("branchMode"), branchStatus = $("branchStatus"), sessionFile = $("sessionFile");
 const observatoryPlot = $("observatoryPlot"), observatoryEvent = $("observatoryEvent");
+const lensSelect = $("lensSelect"), lensCompare = $("lensCompare"), lensDescription = $("lensDescription"), lensVersion = $("lensVersion");
 const WINDOW = manifest.analysis.window_samples, HOP = manifest.analysis.hop_samples;
 let renderer, composer, bloom, scene, camera, controls, spectrumLine, spectrumPoints, spectrumTrails, spectrumCloud;
 let audioContext, audioBuffer, sourceNode, sourceGain, startedAt = 0, offset = 0, playing = false;
@@ -20,7 +22,7 @@ let selectedAudioBytes = null, selectedAudioName = "", selectedAudioSha256 = "";
 let pianoEnergy = 0, pianoPulse = 0, pianoTime = 0, lastPianoHistory = 0, lastFrameTime = 0;
 const pianoBand = new THREE.Vector3(0, 0, 1);
 const pianoVoices = new Map();
-let analysis = null, currentFeatures = {rms: 0, low: 0, mid: 0, high: 0, centroid: 0, spread: 0, flatness: 0, flux: 0, attack: 0, density: 0, stereo_width: 0, silence: 1, repeat: 0, novelty: 0};
+let analysis = null, activeLensId = VISUAL_LENSES[0].id, currentFeatures = {rms: 0, low: 0, mid: 0, high: 0, centroid: 0, spread: 0, flatness: 0, flux: 0, attack: 0, density: 0, stereo_width: 0, silence: 1, repeat: 0, novelty: 0};
 let selectedEventIndex = -1;
 const sourceState = Object.freeze({id: "source", interventions: []});
 let branchState = createBranchState({sourceId: "branch-001"}), activeWorld = "source";
@@ -48,11 +50,17 @@ function renderBranchState() {
   $("freeze").textContent = branchState.frozen ? "Descongelar" : "Congelar";
 }
 function switchWorld(world) { activeWorld = world; branchMode.value = world; renderBranchState(); status.textContent = world === "source" ? "Fonte original · intacta" : "Ramificação · exploração reversível"; }
+function setupLenses() {
+  for (const lens of VISUAL_LENSES) lensSelect.append(new Option(`${lens.label} · ${lens.renderer}`, lens.id));
+  lensSelect.value = activeLensId; lensVersion.textContent = LENS_VERSION;
+  lensSelect.addEventListener("change", () => { activeLensId = lensSelect.value; const lens = getVisualLens(activeLensId); lensDescription.textContent = `${lens.label}: ${lens.description}`; status.textContent = `Lente ${lens.label} · mesma linha do tempo`; drawLensComparison(currentTime()); });
+  lensDescription.textContent = `${getVisualLens(activeLensId).label}: ${getVisualLens(activeLensId).description}`;
+}
 function sessionPayload() {
-  return serializeSession({origin: {name: selectedAudioName || manifest.source.original_name, sha256: selectedAudioSha256 || manifest.source.sha256}, branch: branchState, visual: {offset, camera: {position: camera?.position?.toArray?.() ?? [0, 0, 5.2], target: controls?.target?.toArray?.() ?? [0, 0, 0]}}, seed: manifest.visual.seed, versions: {experiment: manifest.experiment, contract: manifest.analysis.contract_version ?? "acoustic-v1"}});
+  return serializeSession({origin: {name: selectedAudioName || manifest.source.original_name, sha256: selectedAudioSha256 || manifest.source.sha256}, branch: branchState, visual: {offset, lens: activeLensId, camera: {position: camera?.position?.toArray?.() ?? [0, 0, 5.2], target: controls?.target?.toArray?.() ?? [0, 0, 0]}}, seed: manifest.visual.seed, versions: {experiment: manifest.experiment, contract: manifest.analysis.contract_version ?? "acoustic-v1", lens: LENS_VERSION}});
 }
 function downloadSession() { const blob = new Blob([JSON.stringify(sessionPayload(), null, 2) + "\n"], {type: "application/json"}); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "pale-session.json"; link.click(); URL.revokeObjectURL(link.href); status.textContent = "Sessão salva · replay determinístico disponível"; }
-async function loadSession(file) { const imported = importSession(JSON.parse(await file.text())); branchState = imported.branch; interventionSequence = branchState.interventions.length; activeWorld = "branch"; branchMode.value = "branch"; offset = imported.session.visual?.offset ?? 0; renderBranchState(); seek.value = offset; status.textContent = "Sessão reimportada · ramificação restaurada"; }
+async function loadSession(file) { const imported = importSession(JSON.parse(await file.text())); branchState = imported.branch; interventionSequence = branchState.interventions.length; activeWorld = "branch"; branchMode.value = "branch"; offset = imported.session.visual?.offset ?? 0; if (imported.session.visual?.lens && getVisualLens(imported.session.visual.lens).id === imported.session.visual.lens) { activeLensId = imported.session.visual.lens; lensSelect.value = activeLensId; lensDescription.textContent = `${getVisualLens(activeLensId).label}: ${getVisualLens(activeLensId).description}`; } renderBranchState(); seek.value = offset; drawLensComparison(offset); status.textContent = "Sessão reimportada · ramificação restaurada"; }
 
 function fft(re, im) {
   for (let i = 1, j = 0; i < re.length; i++) { let bit = re.length >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
@@ -91,7 +99,7 @@ async function decodeAndAnalyze(audioBytes = null) {
   return {duration: audioBuffer.duration, sampleRate: audioBuffer.sampleRate, frameCount, raw, normalized, spectra, ranges, silenceFloor};
 }
 
-function featuresAt(seconds) { if (!analysis) return currentFeatures; const index = clamp(seconds / analysis.duration * (analysis.frameCount - 1), 0, analysis.frameCount - 1), lo = Math.floor(index), hi = Math.min(analysis.frameCount - 1, lo + 1), t = index - lo, out = {}; for (const key of Object.keys(analysis.normalized)) out[key] = lerp(analysis.normalized[key][lo] ?? 0, analysis.normalized[key][hi] ?? 0, t); return out; }
+function featuresAt(seconds) { if (!analysis) return currentFeatures; const series = analysis.normalized ?? analysis.features; const index = clamp(seconds / analysis.duration * (analysis.frameCount - 1), 0, analysis.frameCount - 1), lo = Math.floor(index), hi = Math.min(analysis.frameCount - 1, lo + 1), t = index - lo, out = {}; for (const key of Object.keys(series)) out[key] = lerp(series[key][lo] ?? 0, series[key][hi] ?? 0, t); return out; }
 function observatoryValues(key) { return analysis?.features?.[key] ?? analysis?.normalized?.[key] ?? []; }
 function selectObservatoryEvent(seconds) { if (!analysis?.events?.length) return; const index = Math.max(0, Math.min(analysis.events.length - 1, Math.round(seconds / Math.max(analysis.duration, 1e-8) * (analysis.events.length - 1)))); if (index === selectedEventIndex) return; selectedEventIndex = index; const event = analysis.events[index]; observatoryEvent.textContent = `${event.id} · ${formatTime(event.time)} · ${event.layer} · energia ${Math.round(event.energy * 100)}% · ataque ${Math.round(event.attack * 100)}% · ${event.confidence}`; }
 function drawObservatory(seconds = 0) {
@@ -105,7 +113,15 @@ function drawObservatory(seconds = 0) {
   rows.forEach(([label, key, color], row) => { const values = observatoryValues(key); const y0 = top + row * rowHeight + 15; context.fillStyle = "#8f96ad"; context.font = "9px system-ui"; context.fillText(label, 5, y0 + 3); context.strokeStyle = "#20263a"; context.beginPath(); context.moveTo(plotLeft, y0); context.lineTo(width - 10, y0); context.stroke(); if (!values.length) return; context.strokeStyle = color; context.beginPath(); values.forEach((value, index) => { const x = plotLeft + index / Math.max(1, values.length - 1) * plotWidth, y = y0 - clamp(value) * 12; index ? context.lineTo(x, y) : context.moveTo(x, y); }); context.stroke(); });
   const cursor = plotLeft + clamp(seconds / Math.max(analysis.duration, 1e-8)) * plotWidth; context.strokeStyle = "#fff"; context.globalAlpha = .9; context.beginPath(); context.moveTo(cursor, top - 2); context.lineTo(cursor, top + rows.length * rowHeight - 5); context.stroke(); context.globalAlpha = 1; selectObservatoryEvent(seconds);
 }
+function drawLensComparison(seconds = 0) {
+  const context = lensCompare.getContext("2d"), width = lensCompare.width, height = lensCompare.height;
+  context.clearRect(0, 0, width, height); context.fillStyle = "#080a12"; context.fillRect(0, 0, width, height);
+  const duration = Math.max(analysis?.duration ?? 1, 1e-8), rows = VISUAL_LENSES.map((lens, row) => ({lens, row}));
+  rows.forEach(({lens, row}) => { const y = 22 + row * 42; context.fillStyle = "#9da8bd"; context.font = "10px system-ui"; context.fillText(lens.label, 7, y - 8); context.strokeStyle = "#252b3e"; context.beginPath(); context.moveTo(86, y); context.lineTo(width - 8, y); context.stroke(); context.strokeStyle = row ? "#7de4ff" : "#b3a8ff"; context.beginPath(); for (let i = 0; i < 96; i++) { const t = i / 95, frame = featuresAt(t * duration), visual = renderLens(lens.id, frame), x = 86 + t * (width - 94), point = y - visual.height * 12; i ? context.lineTo(x, point) : context.moveTo(x, point); } context.stroke(); });
+  const cursor = 86 + clamp(seconds / duration) * (width - 94); context.strokeStyle = "#fff"; context.beginPath(); context.moveTo(cursor, 8); context.lineTo(cursor, height - 7); context.stroke();
+}
 observatoryPlot.addEventListener("click", (event) => { if (!analysis) return; const rect = observatoryPlot.getBoundingClientRect(), ratio = clamp((event.clientX - rect.left) / rect.width); offset = ratio * analysis.duration; recordIntervention("seek", {seconds: offset}); if (playing) playFrom(offset); drawObservatory(offset); });
+lensCompare.addEventListener("click", (event) => { if (!analysis) return; const rect = lensCompare.getBoundingClientRect(), ratio = clamp((event.clientX - rect.left) / rect.width); offset = ratio * analysis.duration; recordIntervention("seek", {seconds: offset}); if (playing) playFrom(offset); drawLensComparison(offset); });
 const pianoNotes = [
   ["C4", 261.63, "a", false], ["C#4", 277.18, "w", true], ["D4", 293.66, "s", false], ["D#4", 311.13, "e", true], ["E4", 329.63, "d", false], ["F4", 349.23, "f", false], ["F#4", 369.99, "t", true], ["G4", 392.00, "g", false], ["G#4", 415.30, "y", true], ["A4", 440.00, "h", false], ["A#4", 466.16, "u", true], ["B4", 493.88, "j", false], ["C5", 523.25, "k", false], ["C#5", 554.37, "o", true], ["D5", 587.33, "l", false], ["D#5", 622.25, "p", true], ["E5", 659.25, ";", false]
 ];
@@ -140,7 +156,7 @@ function setupScene() {
   const key = new THREE.PointLight("#786dff", 5, 8); key.position.set(2, 1, 3); const fill = new THREE.PointLight("#ff7bce", 3, 6); fill.position.set(-2, -1, 2); scene.add(key, fill); resize(); addEventListener("resize", resize);
 }
 function resize() { if (!renderer) return; const rect = canvas.getBoundingClientRect(); renderer.setSize(rect.width, rect.height, false); composer.setSize(rect.width, rect.height); camera.aspect = rect.width / Math.max(1, rect.height); camera.updateProjectionMatrix(); }
-function setVisuals(seconds, time) { currentFeatures = featuresAt(seconds); const f = currentFeatures; bloom.strength = .045 + f.novelty * .08 + f.rms * .025; updateSpectrum(time, seconds); }
+function setVisuals(seconds, time) { currentFeatures = featuresAt(seconds); const visual = renderLens(activeLensId, currentFeatures); bloom.strength = visual.bloom; scene.rotation.y += (visual.hue - scene.rotation.y * .01) * .0004; updateSpectrum(time, seconds); }
 function pushHistory(seconds) { const sample = {...featuresAt(seconds)}; if (!history.length || seconds - history.at(-1).seconds > .045) { sample.seconds = seconds; history.push(sample); if (history.length > memoryWidth) history.shift(); } }
 async function start() { if (!analysis) { status.textContent = artifactAnalysis ? "Preparando áudio pré-analisado…" : "Decodificando e analisando o áudio…"; if (artifactAnalysis) { const bytes = selectedAudioBytes ?? await fetch(manifest.source.copied_path).then((r) => r.arrayBuffer()); audioContext ??= new AudioContext(); audioBuffer = await audioContext.decodeAudioData(bytes.slice(0)); analysis = artifactAnalysis; } else { analysis = await decodeAndAnalyze(selectedAudioBytes); } seek.max = analysis.duration; durationLabel.textContent = formatTime(analysis.duration); status.textContent = "Organismo pronto · gesto de áudio necessário"; } if (audioContext.state === "suspended") await audioContext.resume(); playFrom(offset); }
 function stopSource() { if (sourceNode) { try { sourceNode.stop(); } catch {} sourceNode.disconnect(); sourceNode = null; } }
@@ -160,4 +176,4 @@ $("saveSession").addEventListener("click", downloadSession);
 sessionFile.addEventListener("change", async () => { if (!sessionFile.files?.[0]) return; try { await loadSession(sessionFile.files[0]); } catch (error) { status.textContent = `Falha ao reimportar sessão: ${error.message}`; } });
 setupScene();
 function frame(now) { const seconds = currentTime(), dt = Math.min(.1, Math.max(0, now / 1000 - lastFrameTime)); lastFrameTime = now / 1000; pianoTime += dt; pianoPulse *= Math.pow(.015, dt); if (pianoVoices.size) pianoEnergy = Math.min(.18, pianoEnergy + dt * .12); else pianoEnergy *= Math.pow(.035, dt); if (analysis) { setVisuals(seconds, now / 1000); if (playing) pushHistory(seconds); seek.value = seconds; currentLabel.textContent = formatTime(seconds); status.textContent = playing ? `Organismo em movimento · memória ${Math.round((currentFeatures.repeat ?? 0) * 100)}%` : "Pausado · use a câmera para observar"; } else if (pianoEnergy > .008) { currentFeatures = {...currentFeatures, rms: pianoEnergy, flux: pianoEnergy * .45, attack: pianoEnergy * .35, density: pianoEnergy * .22, silence: 1 - pianoEnergy * 2, novelty: Math.min(.3, pianoEnergy * 1.4), repeat: .12}; setVisuals(0, now / 1000); if (pianoTime - lastPianoHistory > .045) { history.push({...currentFeatures, seconds: pianoTime}); if (history.length > memoryWidth) history.shift(); lastPianoHistory = pianoTime; } status.textContent = `Piano orgânico · ${pianoVoices.size} tecla${pianoVoices.size === 1 ? "" : "s"}`; } else { setVisuals(0, now / 1000); } drawObservatory(seconds); controls.update(); composer.render(); requestAnimationFrame(frame); }
-status.textContent = `${manifest.source.original_name} · ${artifactAnalysis ? "análise pronta" : "pronto para análise"}`; renderBranchState(); requestAnimationFrame(frame);
+setupLenses(); status.textContent = `${manifest.source.original_name} · ${artifactAnalysis ? "análise pronta" : "pronto para análise"}`; renderBranchState(); drawLensComparison(0); requestAnimationFrame(frame);
