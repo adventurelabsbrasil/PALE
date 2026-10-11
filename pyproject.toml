@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acoustic-lab-exp-001"
+version = "0.1.0"
+description = "Local experiment in self-supervised acoustic representation learning"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=2.0,<3",
+  "scipy>=1.14,<2",
+  "soundfile>=0.13,<1",
+  "torch>=2.11,<3",
+  "torchaudio>=2.11,<3",
+  "torchcodec>=0.14,<0.17",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acoustic_lab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.adventurelabs.acoustic-lab-exp-001-night</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/ribasrodrigo91/LABS/exp-001/.venv/bin/python</string>
+    <string>-m</string>
+    <string>acoustic_lab.night</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/ribasrodrigo91/LABS/exp-001</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PYTHONPATH</key><string>/Users/ribasrodrigo91/LABS/exp-001/src</string>
+    <key>PYTHONDONTWRITEBYTECODE</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>StandardOutPath</key><string>/Users/ribasrodrigo91/LABS/exp-001/artifacts/evolution/night.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/ribasrodrigo91/LABS/exp-001/artifacts/evolution/night.stderr.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict></plist>

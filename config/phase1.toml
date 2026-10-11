@@ -1,0 +1,23 @@
+[data]
+seed = 44
+sample_rate = 22050
+duration_seconds = 5.0
+parents = 100
+variants_per_parent = 3
+train_groups = 70
+validation_groups = 15
+test_groups = 15
+
+[features]
+fft_size = 256
+hop_size = 128
+crop_frames = 128
+mask_frames = 16
+evaluation_crops = 4
+
+[training]
+seed = 2026
+epochs = 5
+batch_size = 8
+learning_rate = 0.001
+max_cpu_threads = 4
