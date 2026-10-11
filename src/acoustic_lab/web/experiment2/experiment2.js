@@ -10,6 +10,7 @@ const $ = (id) => document.getElementById(id);
 const canvas = $("stage"), status = $("status"), playButton = $("play");
 const seek = $("seek"), currentLabel = $("current"), durationLabel = $("duration");
 const audioFile = $("audioFile"), fileName = $("fileName"), piano = $("piano");
+const observatoryPlot = $("observatoryPlot"), observatoryEvent = $("observatoryEvent");
 const WINDOW = manifest.analysis.window_samples, HOP = manifest.analysis.hop_samples;
 let renderer, composer, bloom, scene, camera, controls, spectrumLine, spectrumPoints, spectrumTrails, spectrumCloud;
 let audioContext, audioBuffer, sourceNode, startedAt = 0, offset = 0, playing = false;
@@ -18,6 +19,7 @@ let pianoEnergy = 0, pianoPulse = 0, pianoTime = 0, lastPianoHistory = 0, lastFr
 const pianoBand = new THREE.Vector3(0, 0, 1);
 const pianoVoices = new Map();
 let analysis = null, currentFeatures = {rms: 0, low: 0, mid: 0, high: 0, centroid: 0, spread: 0, flatness: 0, flux: 0, attack: 0, density: 0, stereo_width: 0, silence: 1, repeat: 0, novelty: 0};
+let selectedEventIndex = -1;
 const history = [], spectrumHistory = [], memoryWidth = 256, spectrumBins = 40, spectrumTrailRows = 24;
 let lastSpectrumTime = 0;
 const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
@@ -62,6 +64,20 @@ async function decodeAndAnalyze(audioBytes = null) {
 }
 
 function featuresAt(seconds) { if (!analysis) return currentFeatures; const index = clamp(seconds / analysis.duration * (analysis.frameCount - 1), 0, analysis.frameCount - 1), lo = Math.floor(index), hi = Math.min(analysis.frameCount - 1, lo + 1), t = index - lo, out = {}; for (const key of Object.keys(analysis.normalized)) out[key] = lerp(analysis.normalized[key][lo] ?? 0, analysis.normalized[key][hi] ?? 0, t); return out; }
+function observatoryValues(key) { return analysis?.features?.[key] ?? analysis?.normalized?.[key] ?? []; }
+function selectObservatoryEvent(seconds) { if (!analysis?.events?.length) return; const index = Math.max(0, Math.min(analysis.events.length - 1, Math.round(seconds / Math.max(analysis.duration, 1e-8) * (analysis.events.length - 1)))); if (index === selectedEventIndex) return; selectedEventIndex = index; const event = analysis.events[index]; observatoryEvent.textContent = `${event.id} · ${formatTime(event.time)} · ${event.layer} · energia ${Math.round(event.energy * 100)}% · ataque ${Math.round(event.attack * 100)}% · ${event.confidence}`; }
+function drawObservatory(seconds = 0) {
+  const context = observatoryPlot.getContext("2d"), width = observatoryPlot.width, height = observatoryPlot.height;
+  context.clearRect(0, 0, width, height); context.fillStyle = "#080a12"; context.fillRect(0, 0, width, height);
+  if (!analysis) { context.fillStyle = "#727694"; context.font = "11px system-ui"; context.fillText("Aguardando análise local…", 14, 28); return; }
+  const rows = [["forma/energia", "rms", "#9d8cff"], ["brilho", "centroid", "#7de4ff"], ["ataque", "attack", "#ff9fc9"], ["densidade", "density", "#d9b3ff"], ["silêncio", "silence", "#727694"]];
+  const top = 10, rowHeight = 30, plotLeft = 78, plotWidth = width - plotLeft - 10;
+  const waveform = observatoryValues("waveform");
+  if (waveform.length) { context.beginPath(); waveform.forEach((value, index) => { const x = plotLeft + index / Math.max(1, waveform.length - 1) * plotWidth, y = top + 15 - value * 10; index ? context.lineTo(x, y) : context.moveTo(x, y); }); context.strokeStyle = "#8b82d4"; context.globalAlpha = .45; context.stroke(); context.globalAlpha = 1; }
+  rows.forEach(([label, key, color], row) => { const values = observatoryValues(key); const y0 = top + row * rowHeight + 15; context.fillStyle = "#8f96ad"; context.font = "9px system-ui"; context.fillText(label, 5, y0 + 3); context.strokeStyle = "#20263a"; context.beginPath(); context.moveTo(plotLeft, y0); context.lineTo(width - 10, y0); context.stroke(); if (!values.length) return; context.strokeStyle = color; context.beginPath(); values.forEach((value, index) => { const x = plotLeft + index / Math.max(1, values.length - 1) * plotWidth, y = y0 - clamp(value) * 12; index ? context.lineTo(x, y) : context.moveTo(x, y); }); context.stroke(); });
+  const cursor = plotLeft + clamp(seconds / Math.max(analysis.duration, 1e-8)) * plotWidth; context.strokeStyle = "#fff"; context.globalAlpha = .9; context.beginPath(); context.moveTo(cursor, top - 2); context.lineTo(cursor, top + rows.length * rowHeight - 5); context.stroke(); context.globalAlpha = 1; selectObservatoryEvent(seconds);
+}
+observatoryPlot.addEventListener("click", (event) => { if (!analysis) return; const rect = observatoryPlot.getBoundingClientRect(), ratio = clamp((event.clientX - rect.left) / rect.width); offset = ratio * analysis.duration; if (playing) playFrom(offset); drawObservatory(offset); });
 const pianoNotes = [
   ["C4", 261.63, "a", false], ["C#4", 277.18, "w", true], ["D4", 293.66, "s", false], ["D#4", 311.13, "e", true], ["E4", 329.63, "d", false], ["F4", 349.23, "f", false], ["F#4", 369.99, "t", true], ["G4", 392.00, "g", false], ["G#4", 415.30, "y", true], ["A4", 440.00, "h", false], ["A#4", 466.16, "u", true], ["B4", 493.88, "j", false], ["C5", 523.25, "k", false], ["C#5", 554.37, "o", true], ["D5", 587.33, "l", false], ["D#5", 622.25, "p", true], ["E5", 659.25, ";", false]
 ];
@@ -108,5 +124,5 @@ audioFile.addEventListener("change", async () => { const file = audioFile.files?
 playButton.addEventListener("click", async () => { try { if (!analysis || !playing) await start(); else pause(); } catch (error) { status.textContent = `Falha no áudio: ${error.message}`; } });
 $("restart").addEventListener("click", async () => { reset(); if (analysis) await start(); }); seek.addEventListener("input", () => { offset = Number(seek.value); if (playing) playFrom(offset); }); $("resetCamera").addEventListener("click", () => { controls.reset(); camera.position.set(0, 0, 5.2); controls.target.set(0, 0, 0); });
 setupScene();
-function frame(now) { const seconds = currentTime(), dt = Math.min(.1, Math.max(0, now / 1000 - lastFrameTime)); lastFrameTime = now / 1000; pianoTime += dt; pianoPulse *= Math.pow(.015, dt); if (pianoVoices.size) pianoEnergy = Math.min(.18, pianoEnergy + dt * .12); else pianoEnergy *= Math.pow(.035, dt); if (analysis) { setVisuals(seconds, now / 1000); if (playing) pushHistory(seconds); seek.value = seconds; currentLabel.textContent = formatTime(seconds); status.textContent = playing ? `Organismo em movimento · memória ${Math.round((currentFeatures.repeat ?? 0) * 100)}%` : "Pausado · use a câmera para observar"; } else if (pianoEnergy > .008) { currentFeatures = {...currentFeatures, rms: pianoEnergy, flux: pianoEnergy * .45, attack: pianoEnergy * .35, density: pianoEnergy * .22, silence: 1 - pianoEnergy * 2, novelty: Math.min(.3, pianoEnergy * 1.4), repeat: .12}; setVisuals(0, now / 1000); if (pianoTime - lastPianoHistory > .045) { history.push({...currentFeatures, seconds: pianoTime}); if (history.length > memoryWidth) history.shift(); lastPianoHistory = pianoTime; } status.textContent = `Piano orgânico · ${pianoVoices.size} tecla${pianoVoices.size === 1 ? "" : "s"}`; } else { setVisuals(0, now / 1000); } controls.update(); composer.render(); requestAnimationFrame(frame); }
+function frame(now) { const seconds = currentTime(), dt = Math.min(.1, Math.max(0, now / 1000 - lastFrameTime)); lastFrameTime = now / 1000; pianoTime += dt; pianoPulse *= Math.pow(.015, dt); if (pianoVoices.size) pianoEnergy = Math.min(.18, pianoEnergy + dt * .12); else pianoEnergy *= Math.pow(.035, dt); if (analysis) { setVisuals(seconds, now / 1000); if (playing) pushHistory(seconds); seek.value = seconds; currentLabel.textContent = formatTime(seconds); status.textContent = playing ? `Organismo em movimento · memória ${Math.round((currentFeatures.repeat ?? 0) * 100)}%` : "Pausado · use a câmera para observar"; } else if (pianoEnergy > .008) { currentFeatures = {...currentFeatures, rms: pianoEnergy, flux: pianoEnergy * .45, attack: pianoEnergy * .35, density: pianoEnergy * .22, silence: 1 - pianoEnergy * 2, novelty: Math.min(.3, pianoEnergy * 1.4), repeat: .12}; setVisuals(0, now / 1000); if (pianoTime - lastPianoHistory > .045) { history.push({...currentFeatures, seconds: pianoTime}); if (history.length > memoryWidth) history.shift(); lastPianoHistory = pianoTime; } status.textContent = `Piano orgânico · ${pianoVoices.size} tecla${pianoVoices.size === 1 ? "" : "s"}`; } else { setVisuals(0, now / 1000); } drawObservatory(seconds); controls.update(); composer.render(); requestAnimationFrame(frame); }
 status.textContent = `${manifest.source.original_name} · ${artifactAnalysis ? "análise pronta" : "pronto para análise"}`; requestAnimationFrame(frame);

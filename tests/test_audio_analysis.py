@@ -27,6 +27,8 @@ def test_audio_analysis_is_deterministic_and_emits_timeline(tmp_path):
     assert first["frame_count"] == len(first["events"])
     assert first["events"][0]["id"] == "event-000000"
     assert first["events"][0]["confidence"] == "inferred"
+    assert len(first["features"]["waveform"]) == 256
+    assert len(first["spectra"][0]) == 40
     assert first["source"]["sha256"]
 
 
