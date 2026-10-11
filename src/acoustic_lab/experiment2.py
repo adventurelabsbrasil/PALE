@@ -12,6 +12,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import webbrowser
 
+from .audio_analysis import analyze_audio
+
 
 EXPERIMENT_VERSION = "experiment2-organism-v1"
 WEB_ROOT = Path(__file__).parent / "web" / "experiment2"
@@ -26,7 +28,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def prepare_experiment2(audio: Path, output: Path) -> dict:
+def prepare_experiment2(audio: Path, output: Path, *, preanalyze: bool = False) -> dict:
     """Create a self-contained local artifact without starting a server."""
     audio = audio.expanduser().resolve()
     output = output.expanduser().resolve()
@@ -78,6 +80,21 @@ def prepare_experiment2(audio: Path, output: Path) -> dict:
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    if preanalyze:
+        print("Analisando áudio local antes de abrir o mundo… 0%", flush=True)
+        analysis = analyze_audio(audio, progress=lambda value: print(f"Analisando áudio local… {value}%", flush=True) if value in {0, 25, 50, 75, 100} else None)
+        (output / "analysis.json").write_text(json.dumps(analysis, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        manifest["analysis_artifact"] = "analysis.json"
+        manifest["identity"] = analysis["identity"]
+        manifest["analysis"] = {
+            **manifest["analysis"],
+            "analyzer_version": analysis["analyzer_version"],
+            "contract_version": analysis["contract_version"],
+            "frame_count": analysis["frame_count"],
+            "precomputed": True,
+        }
+        (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     shutil.copy2(WEB_ROOT / "experiment2.html", output / "experiment2.html")
     shutil.copy2(WEB_ROOT / "experiment2.js", output / "experiment2.js")
     for shader in ("core.vert", "core.frag", "memory.vert", "memory.frag", "particles.vert", "particles.frag"):
@@ -124,8 +141,8 @@ def serve_experiment2(output: Path, host: str = "127.0.0.1", port: int = 0, open
     return url
 
 
-def run_experiment2(audio: Path, output: Path, *, host: str, port: int, open_browser: bool, serve: bool) -> dict:
-    result = prepare_experiment2(audio, output)
+def run_experiment2(audio: Path, output: Path, *, host: str, port: int, open_browser: bool, serve: bool, preanalyze: bool = False) -> dict:
+    result = prepare_experiment2(audio, output, preanalyze=preanalyze)
     if serve:
         serve_experiment2(output, host=host, port=port, open_browser=open_browser)
     return result
@@ -138,6 +155,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
+    parser.add_argument("--preanalyze", action="store_true")
 
 
 def main() -> None:
@@ -151,6 +169,7 @@ def main() -> None:
         port=args.port,
         open_browser=not args.no_open,
         serve=not args.no_serve,
+        preanalyze=args.preanalyze,
     )
 
 

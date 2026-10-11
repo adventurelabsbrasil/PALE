@@ -71,6 +71,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
+    parser.add_argument("--preanalyze", action="store_true")
     args = parser.parse_args()
     if args.command == "experiments":
         if args.experiment_id is None:
@@ -110,6 +111,7 @@ def main() -> None:
             port=args.port,
             open_browser=not args.no_open,
             serve=not args.no_serve,
+            preanalyze=args.preanalyze,
         )
 
 
