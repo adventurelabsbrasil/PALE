@@ -127,7 +127,14 @@ def analyze_audio(
     normalized["novelty"] = [round(float(np.clip(0.25 + signal * 0.75, 0, 1)), 8) for signal in event_signal]
 
     features = {key: _round_values(values) for key, values in raw.items()}
+    waveform_indices = np.linspace(0, len(samples) - 1, 256, dtype=np.int64)
+    features["waveform"] = _round_values(np.abs(samples[waveform_indices]).tolist())
     features.update(normalized)
+    spectra = []
+    for spectrum in frame_spectra:
+        indices = np.linspace(1, len(spectrum) - 1, 40, dtype=np.int64)
+        peak = max(float(np.max(spectrum[1:])), 1e-8)
+        spectra.append(_round_values((spectrum[indices] / peak).tolist()))
     events = []
     for index, start in enumerate(frame_starts):
         dominant = max(("low", normalized["low"][index]), ("mid", normalized["mid"][index]), ("high", normalized["high"][index]), key=lambda item: item[1])[0]
@@ -167,6 +174,7 @@ def analyze_audio(
         "window_samples": config.window_samples,
         "hop_samples": config.hop_samples,
         "features": features,
+        "spectra": spectra,
         "events": events,
         "warnings": ["Musical entities are perceptual inferences from the audio; no instrument identity is asserted."],
     }
