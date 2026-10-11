@@ -25,6 +25,8 @@ def test_artifact_round_trip_is_local_and_rejects_tampering(tmp_path):
     assert artifact["privacy"] == {"audio_included": False, "processing": "local-only", "remote_upload": False}
     assert artifact["analysis"]["source"]["channels"] == 2
     assert max(artifact["analysis"]["features"]["stereo_width"]) > 0
+    assert {entity["layer"] for entity in artifact["analysis"]["entities"]} == {"low", "impact", "harmony", "line", "texture", "space"}
+    assert artifact["analysis"]["relations"]
 
     tampered = json.loads((output / "artifact.json").read_text())
     tampered["analysis"]["identity"] = "changed"

@@ -12,7 +12,7 @@ import numpy as np
 import soundfile as sf
 
 from .artifact import RESOURCE_LIMITS, analysis_identity, validate_analysis
-from .event_contract import CONTRACT_VERSION, validate_event
+from .event_contract import CONTRACT_VERSION, PERCEPTUAL_LAYERS, validate_entity, validate_event, validate_relation
 from .provenance import DIDACTIC_VERSION, SIGNAL_DOMAINS, annotate_event
 
 
@@ -80,6 +80,58 @@ def _normalize(values: list[float]) -> list[float]:
 
 def _round_values(values: list[float]) -> list[float]:
     return [round(float(value), 8) for value in values]
+
+
+def _semantic_model(normalized: dict[str, list[float]], events: list[dict], duration: float, seed: int) -> tuple[list[dict], list[dict]]:
+    """Build stable perceptual entities and relations from the shared timeline."""
+    signals = {
+        "low": normalized["low"],
+        "impact": normalized["attack"],
+        "harmony": [min(1.0, (low + mid + high) / 3) for low, mid, high in zip(normalized["low"], normalized["mid"], normalized["high"])],
+        "line": normalized["centroid"],
+        "texture": normalized["high"],
+        "space": normalized["silence"],
+    }
+    entities = []
+    for index, layer in enumerate(PERCEPTUAL_LAYERS):
+        values = signals[layer]
+        event_ids = [event["id"] for event, value in zip(events, values) if value >= 0.35]
+        energy = round(float(np.mean(values)), 8)
+        entities.append({
+            "id": f"entity-{layer}-000001",
+            "layer": layer,
+            "confidence": "inferred",
+            "time": 0.0,
+            "duration": round(duration, 8),
+            "position": {
+                "x": round(float(np.cos(index * np.pi / 3) * (1.0 + energy)), 8),
+                "y": round(float(np.sin(index * np.pi / 3) * (1.0 + energy)), 8),
+                "z": round(float((energy - 0.5) * 2 + (seed % 17) / 100), 8),
+            },
+            "energy": energy,
+            "event_ids": event_ids,
+            "provenance": "perceptual signal aggregate; not an instrument or musical identity",
+        })
+        validate_entity(entities[-1])
+
+    relations = []
+    for left in range(len(entities)):
+        for right in range(left + 1, len(entities)):
+            a, b = signals[PERCEPTUAL_LAYERS[left]], signals[PERCEPTUAL_LAYERS[right]]
+            strength = 1.0 - min(1.0, float(np.mean(np.abs(np.asarray(a) - np.asarray(b)))))
+            relation_type = "synchronization" if strength >= 0.7 else "contrast"
+            relation = {
+                "id": f"relation-{PERCEPTUAL_LAYERS[left]}-{PERCEPTUAL_LAYERS[right]}",
+                "source": entities[left]["id"],
+                "target": entities[right]["id"],
+                "type": relation_type,
+                "confidence": "inferred",
+                "strength": round(strength, 8),
+                "event_ids": sorted(set(entities[left]["event_ids"]) & set(entities[right]["event_ids"])),
+            }
+            validate_relation(relation)
+            relations.append(relation)
+    return entities, relations
 
 
 def analyze_audio(
@@ -182,6 +234,8 @@ def analyze_audio(
         validate_event(event)
         events.append(event)
 
+    entities, relations = _semantic_model(normalized, events, len(samples) / sample_rate, config.seed)
+
     config_data = asdict(config)
     identity = analysis_identity(source_hash, ANALYZER_VERSION, CONTRACT_VERSION, config_data)
     result = {
@@ -198,6 +252,8 @@ def analyze_audio(
         "features": features,
         "spectra": spectra,
         "events": events,
+        "entities": entities,
+        "relations": relations,
         "warnings": ["Musical entities are perceptual inferences from the audio; no instrument identity is asserted."],
         "didactic": {
             "version": DIDACTIC_VERSION,
