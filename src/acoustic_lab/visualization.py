@@ -6,19 +6,22 @@ from pathlib import Path
 
 import numpy as np
 
+from .projection import fit_projection, transform_projection
 
-def project_2d(index: list[dict], vectors: dict[str, np.ndarray]) -> tuple[dict[str, list[float]], dict]:
-    """Fit PCA on training embeddings only; fix component signs for stable plots."""
-    train = np.stack([vectors[item["id"]] for item in index if item["split"] == "train"]).astype(np.float64)
-    mean = train.mean(axis=0)
-    _, singular_values, vt = np.linalg.svd(train - mean, full_matrices=False)
-    components = vt[:2].copy()
-    for row in components:
-        pivot = int(np.argmax(np.abs(row)))
-        if row[pivot] < 0:
-            row *= -1
-    coordinates = {item["id"]: ((vectors[item["id"]] - mean) @ components.T).tolist() for item in index}
-    return coordinates, {"method": "PCA", "fit_split": "train", "mean": mean.tolist(), "components": components.tolist(), "singular_values": singular_values[:2].tolist()}
+
+def project_2d(
+    index: list[dict], vectors: dict[str, np.ndarray],
+    *, checkpoint_sha256: str = "unknown", config: dict | None = None,
+) -> tuple[dict[str, list[float]], dict]:
+    """Fit PCA on training embeddings once, then transform every item."""
+    train = np.stack([vectors[item["id"]] for item in index if item["split"] == "train"])
+    fitted = fit_projection(
+        train, checkpoint_sha256=checkpoint_sha256, config=config or {}, dimensions=2,
+    )
+    matrix = np.stack([vectors[item["id"]] for item in index])
+    transformed = transform_projection(matrix, fitted)
+    coordinates = {item["id"]: transformed[i].tolist() for i, item in enumerate(index)}
+    return coordinates, fitted.to_dict()
 
 
 def _plot(index: list[dict], coords: dict[str, list[float]]) -> str:

@@ -1,4 +1,15 @@
-# Laboratório de Descoberta Acústica — Fase 1
+# PALE — Projeto Acústico-Lógico-Estrutural
+
+Este repositório é o guarda-chuva público dos experimentos de áudio da Adventure Labs. O primeiro experimento (`exp-001`) é o laboratório de descoberta acústica descrito abaixo; o catálogo comum está documentado em [`docs/PALE_REPOSITORY.md`](docs/PALE_REPOSITORY.md).
+
+Para listar e executar experimentos pelo ponto de entrada do PALE:
+
+```sh
+uv run python -m acoustic_lab experiments
+uv run python -m acoustic_lab experiments --run exp-001 --output artifacts/my-run
+```
+
+## Laboratório de Descoberta Acústica — Fase 1
 
 Experimento local de aprendizado autossupervisionado com sons sintéticos. O modelo recebe apenas espectrogramas de áudio, nunca parâmetros do gerador, famílias ou rótulos musicais. Uma projeção visual não constitui evidência de descoberta científica.
 
@@ -13,6 +24,126 @@ uv run python -m acoustic_lab run --config config/phase1.toml --output artifacts
 ```
 
 `--output` precisa apontar para um diretório novo. Abrir `artifacts/my-run/report.html` no navegador para ver métricas, curvas e pontos clicáveis com seus WAVs. O comando não baixa datasets nem usa serviços externos. A primeira instalação das dependências Python pode precisar de acesso à rede.
+
+## Ingestão WAV
+
+`acoustic_lab.ingest.ingest_audio(file_path)` aceita WAV, descarta metadados do
+contêiner, faz downmix para um tensor mono 1D, normaliza o pico para `[-1, 1]`
+e envia o tensor para MPS quando o backend está disponível, com fallback para
+CPU.
+
+Para validar um arquivo local:
+
+```sh
+uv run python -m acoustic_lab.ingest /caminho/para/audio.wav
+# shape=(...) sample_rate=... device=...
+```
+
+O carregamento usa `torchaudio`/TorchCodec e requer FFmpeg disponível no
+sistema para decodificação de áudio. Essa ingestão é um probe de entrada; não
+importa o arquivo para o dataset, não altera checkpoint e não promove uma
+representação.
+
+## Probe controlado de representação
+
+Um WAV externo pode ser medido sem entrar no dataset. O probe calcula o mesmo
+espectrograma da Fase 1, usa janelas completas de 128 quadros com hop de 16,
+transforma cada embedding na PCA congelada do treino e grava métricas em um
+diretório novo:
+
+```sh
+uv run python -m acoustic_lab.probe \
+  --audio /caminho/para/audio.wav \
+  --checkpoint artifacts/phase1-final/checkpoint.pt \
+  --projection artifacts/phase1-final/pca_fit.json \
+  --config artifacts/phase1-final/config.toml \
+  --output artifacts/probe-001
+```
+
+O diretório também contém `probe.html`: sirva-o com `python3 -m http.server`
+e abra no navegador para explorar a trajetória por janela, ouvir o WAV e
+inspecionar as métricas. A página é um protótipo local, não uma interface de
+produção.
+
+Áudio menor que uma janela produz zero pontos (não é preenchido). O relatório
+registra hash do WAV, checkpoint e projeção, estados de silêncio/clipping,
+distância entre janelas adjacentes e latência. A PCA nunca é recalculada pelo
+probe; `probe.json` é evidência de sondagem, não dado de treinamento.
+
+## Probe externo agnóstico em dois mundos
+
+Para passar um MP3 ou WAV externo pelos dois mundos congelados e abrir a
+trajetória no Three.js:
+
+```sh
+uv run python -m acoustic_lab.external_probe \
+  --audio /caminho/para/audio.mp3 \
+  --source artifacts/phase1-final \
+  --world-b artifacts/experience-preview-audio-reactive/future_predictor.pt \
+  --output artifacts/external-probe-001
+python3 -m http.server 8005 --directory artifacts/external-probe-001
+```
+
+Abra `http://127.0.0.1:8005/external_probe.html`. O comando aceita MP3/WAV,
+decodifica para mono a 22.050 Hz, não treina e não importa o áudio no dataset.
+O Mundo A usa o encoder da Fase 1; o Mundo B usa o preditor de trecho futuro
+aprovado. A página sincroniza o marcador das duas trajetórias com a reprodução
+do áudio. Esta é uma experiência isolada; a prévia Three.js aprovada não é
+alterada.
+
+## Experimento 2 — Organism
+
+## Music Paint Wall — experimento visual isolado
+
+Para abrir o estudo de pintura musical, sirva a pasta web e abra
+`http://127.0.0.1:8007/music_painting.html`:
+
+```sh
+./scripts/serve_music_painting.sh
+```
+
+A página carrega automaticamente três obras locais de piano encontradas em
+`~/Downloads`: Chopin, Beethoven e Bach. Os botões trocam a música sem exigir
+upload; a opção de carregar outro WAV/MP3 continua disponível.
+
+O estudo 02 aceita upload local de WAV/MP3 de piano. Uma análise offline extrai
+ataques, energia, duração, brilho e picos aproximados de notas; esses eventos
+alimentam partículas GPU com impacto, expansão, respingos e escorrimento. O
+pitch ancora a região, mas a combinação dos parâmetros cria uma composição
+emergente e única por música. A seed deriva do hash do arquivo, permitindo
+reconstrução determinística; a obra e os eventos podem ser exportados em PNG e
+JSON. O estado permanece em memória e o artefato é separado das experiências
+acústicas existentes.
+
+O experimento 2 é uma experiência audiovisual independente da Fase 1. Ele
+representa um áudio como um organismo 3D: um núcleo reage ao estado acústico
+presente e uma malha espiral preserva memória temporal. A análise usa sinais
+acústicos gerais, sem encoder, PCA, rótulos musicais ou importação para o
+dataset. O visualizador usa Three.js/WebGL2 local, shaders GLSL próprios e
+adapta a complexidade para manter fluidez em áudios distintos.
+
+Para gerar e abrir a experiência com uma única chamada:
+
+```sh
+uv run python -m acoustic_lab experiment2 \
+  --audio /Users/ribasrodrigo91/Downloads/exp-002.mp3 \
+  --output artifacts/experiment-002
+```
+
+O comando copia o áudio para o artefato, registra seu SHA-256, prepara os
+assets locais, inicia um servidor em `127.0.0.1` e abre o navegador. A página
+oferece iniciar/pausar, reiniciar, busca temporal, reset da câmera e
+encerramento do servidor. A saída é local e deve ser tratada como artefato
+privado; ela não entra no Git nem no dataset.
+
+Para validar apenas a geração, sem abrir navegador ou servidor:
+
+```sh
+uv run python -m acoustic_lab experiment2 \
+  --audio /Users/ribasrodrigo91/Downloads/exp-002.mp3 \
+  --output artifacts/experiment-002 \
+  --no-serve --no-open
+```
 
 ## Prévia audiovisual 3D local
 

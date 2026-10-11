@@ -17,9 +17,11 @@ import torch
 
 from .config import load_config
 from .experience import build_experience
+from .experiment2 import run_experiment2
 from .synth import generate_dataset
 from .training import embeddings, load_features, train
 from .visualization import project_2d, write_report
+from .registry import format_catalog, run_registered
 
 
 def run(config_path: Path, output: Path) -> dict:
@@ -59,16 +61,56 @@ def run(config_path: Path, output: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Acoustic Lab experiment 001")
-    parser.add_argument("command", choices=["run", "experience"])
+    parser.add_argument("command", choices=["run", "experience", "experiment2", "experiments"])
     parser.add_argument("--config", type=Path, default=Path("config/phase1.toml"))
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--source", type=Path, default=Path("artifacts/phase1-final"))
+    parser.add_argument("--audio", type=Path)
+    parser.add_argument("--run", dest="experiment_id", metavar="EXPERIMENT")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--no-open", action="store_true")
+    parser.add_argument("--no-serve", action="store_true")
     args = parser.parse_args()
+    if args.command == "experiments":
+        if args.experiment_id is None:
+            print(format_catalog())
+            return
+        if args.output is None:
+            parser.error("experiments --run requires --output")
+        try:
+            run_registered(
+                args.experiment_id,
+                config=args.config,
+                output=args.output,
+                audio=args.audio,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_open,
+                serve=not args.no_serve,
+            )
+        except (FileNotFoundError, ValueError) as error:
+            parser.error(str(error))
+        return
+
+    if args.output is None:
+        parser.error("--output is required for this command")
     if args.command == "run":
         run(args.config, args.output)
-    else:
+    elif args.command == "experience":
         result = build_experience(args.source, args.output)
         print(f"Experience: {result['output']} ({result['points']} points)", flush=True)
+    else:
+        if args.audio is None:
+            parser.error("experiment2 requires --audio")
+        run_experiment2(
+            args.audio,
+            args.output,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_open,
+            serve=not args.no_serve,
+        )
 
 
 if __name__ == "__main__":
