@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
-from .event_contract import validate_event
+from .event_contract import validate_entity, validate_event, validate_relation
 
 
 ARTIFACT_VERSION = "pale-artifact-v1"
@@ -69,6 +69,29 @@ def validate_analysis(analysis: Mapping[str, Any], *, limits: Mapping[str, int] 
             raise ValueError("timeline contains a non-finite time")
         if event["time"] + event["duration"] > analysis["duration"] + 1e-6:
             raise ValueError("timeline event exceeds analysis duration")
+    entities = analysis.get("entities", [])
+    relations = analysis.get("relations", [])
+    if not isinstance(entities, list) or len(entities) > limits["max_entities"]:
+        raise ValueError("entity collection exceeds the PALE limit")
+    if not isinstance(relations, list) or len(relations) > limits["max_entities"] * 2:
+        raise ValueError("relation collection exceeds the PALE limit")
+    entity_ids = set()
+    event_ids = {event["id"] for event in events}
+    for entity in entities:
+        validate_entity(entity)
+        if entity["id"] in entity_ids:
+            raise ValueError("entity ids must be unique")
+        entity_ids.add(entity["id"])
+        if entity["time"] + entity["duration"] > analysis["duration"] + 1e-6:
+            raise ValueError("entity exceeds analysis duration")
+        if not set(entity["event_ids"]) <= event_ids:
+            raise ValueError("entity references an unknown event")
+    for relation in relations:
+        validate_relation(relation)
+        if relation["source"] not in entity_ids or relation["target"] not in entity_ids:
+            raise ValueError("relation references an unknown entity")
+        if not set(relation["event_ids"]) <= event_ids:
+            raise ValueError("relation references an unknown event")
     if not isinstance(analysis["features"], Mapping) or not isinstance(analysis["spectra"], list):
         raise ValueError("analysis features and spectra must be JSON collections")
     for values in analysis["features"].values():

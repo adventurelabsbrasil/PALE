@@ -45,3 +45,18 @@ def test_event_contract_rejects_unconfirmed_synthetic_inference():
     event["origin"] = "unknown"
     with pytest.raises(ValueError, match="origin"):
         validate_event(event)
+
+
+def test_entity_model_is_deterministic_and_references_timeline(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    source = tmp_path / "tone.wav"
+    time = np.arange(16_000, dtype=np.float32) / 8_000
+    sf.write(source, (0.4 * np.sin(2 * np.pi * 220 * time)).astype(np.float32), 8_000)
+    first = analyze_audio(source)
+    second = analyze_audio(source)
+    assert first["entities"] == second["entities"]
+    assert first["relations"] == second["relations"]
+    event_ids = {event["id"] for event in first["events"]}
+    assert all(set(entity["event_ids"]) <= event_ids for entity in first["entities"])
